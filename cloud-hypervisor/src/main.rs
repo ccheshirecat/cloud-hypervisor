@@ -504,6 +504,25 @@ fn create_app(default_vcpus: String, default_memory: String, default_rng: String
         .args(args)
 }
 
+#[cfg(target_os = "linux")]
+fn enable_process_memory_merge() {
+    const PR_SET_MEMORY_MERGE: libc::c_int = 67;
+
+    // SAFETY: prctl is called on the current process with fixed scalar arguments.
+    let ret = unsafe { libc::prctl(PR_SET_MEMORY_MERGE, 1, 0, 0, 0) };
+    if ret != 0 {
+        let err = io::Error::last_os_error();
+        warn!(
+            "Failed to enable process-wide KSM merging with prctl(PR_SET_MEMORY_MERGE): {err}"
+        );
+    } else {
+        info!("Enabled process-wide KSM merging with prctl(PR_SET_MEMORY_MERGE)");
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn enable_process_memory_merge() {}
+
 fn start_vmm(cmd_arguments: &ArgMatches) -> Result<Option<String>, Error> {
     let log_level = match cmd_arguments.get_count("v") {
         0 => LevelFilter::Warn,
@@ -526,6 +545,8 @@ fn start_vmm(cmd_arguments: &ArgMatches) -> Result<Option<String>, Error> {
     }))
     .map(|()| log::set_max_level(log_level))
     .map_err(Error::LoggerSetup)?;
+
+    enable_process_memory_merge();
 
     let (api_socket_path, api_socket_fd) =
         if let Some(socket_config) = cmd_arguments.get_one::<String>("api-socket") {
